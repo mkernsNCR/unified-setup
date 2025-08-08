@@ -113,40 +113,40 @@ init_logging() {
     log_info "Log will be saved to $LOG_FILE"
 }
 
-# Load the installation state from STATE_FILE into an associative array
-# called INSTALL_STATE.  Each line in STATE_FILE should have the form
-# phase_name=complete.  If the file does not exist then the array is
-# initialised empty.  Bash associative arrays require bash 4+.
-declare -A INSTALL_STATE
+# Load the installation state.  If a state file exists then it will
+# later be queried by is_phase_complete; otherwise phases start from a
+# clean slate.  On older versions of bash (as used by the default
+# macOS /bin/bash) associative arrays are unavailable, so state is
+# stored in the file and queried directly.
 load_installation_state() {
     if [[ -f "$STATE_FILE" ]]; then
-        while IFS='=' read -r key value; do
-            if [[ -n "$key" && -n "$value" ]]; then
-                INSTALL_STATE["$key"]="$value"
-            fi
-        done < "$STATE_FILE"
-        log_info "Loaded installation state from $STATE_FILE"
+        log_info "Found existing state file at $STATE_FILE"
     fi
 }
 
-# Write a phase completion flag to STATE_FILE.  Existing state is
-# preserved; the new key overwrites any previous entry for the phase.
+# Write a phase completion flag to STATE_FILE.  The state file is
+# rewritten on each update to ensure there is only one entry per
+# phase.  Older lines for the same phase are removed.
 save_phase_complete() {
     local phase="$1"
-    INSTALL_STATE["$phase"]="complete"
-    # Rewrite state file
-    : > "$STATE_FILE"
-    for key in "${!INSTALL_STATE[@]}"; do
-        echo "$key=${INSTALL_STATE[$key]}" >> "$STATE_FILE"
-    done
+    local tmp_file="${STATE_FILE}.tmp"
+    # Retain other lines but discard any existing entry for this phase
+    if [[ -f "$STATE_FILE" ]]; then
+        grep -v "^${phase}=complete$" "$STATE_FILE" > "$tmp_file" || true
+    else
+        : > "$tmp_file"
+    fi
+    echo "${phase}=complete" >> "$tmp_file"
+    mv "$tmp_file" "$STATE_FILE"
     log_info "Recorded completion of phase '$phase' in $STATE_FILE"
 }
 
-# Determine whether a phase has already completed.  Returns 0 (true) if
-# the phase is marked complete; otherwise returns 1.
+# Determine whether a phase has already completed.  Returns 0 (true)
+# if a line 'phase=complete' exists in the state file, otherwise
+# returns 1.
 is_phase_complete() {
     local phase="$1"
-    if [[ "${INSTALL_STATE[$phase]:-}" == "complete" ]]; then
+    if [[ -f "$STATE_FILE" ]] && grep -q "^${phase}=complete$" "$STATE_FILE"; then
         return 0
     fi
     return 1
